@@ -1,0 +1,18 @@
+# Ignorer tous les fichiers .log
+*.log
+
+# Ignorer le dossier node_modules
+node_modules/
+
+# Ignorer le fichier .env
+.env
+
+# Ignorer les fichiers temporaires créés par un OS
+.DS_Store
+Thumbs.db
+
+# Ignorer un dossier spécifique
+mon_dossier_temporaire/
+
+# Ignorer tous les fichiers exécutables
+*.exe
