@@ -2,186 +2,168 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, date
-import plotly.express as px
 import numpy as np
 import pathlib
 
-#Pour le chargement du fichier CSS du style
 def load_css(file_path):
-    with open(file_path) as f:
-        st.html(f"<style>{f.read()}</style>")
+    try:
+        with open(file_path) as f:
+            st.html(f"<style>{f.read()}</style>")
+    except FileNotFoundError:
+        st.warning(f"Fichier CSS non trouvé à l'emplacement : {file_path}")
 
-css_path=pathlib.Path("assets/styles.css")
+st.set_page_config(page_title="Tableau de Bord", page_icon="assets/logo.png", layout="wide")
+css_path = pathlib.Path("assets/styles.css")
 load_css(css_path)
 
-
-
-st.set_page_config(
-    page_title="Tableau de Bord",
-    page_icon="assets/logo.png",
-    layout="wide"
-)
+@st.cache_data
+def load_data(file_path, sheet_name):
+    try:
+        df = pd.read_excel(file_path, sheet_name=sheet_name)
+        df.columns = df.columns.str.replace('__', '').str.strip()
+        if 'Date comptable Hist' in df.columns:
+            df['Date comptable Hist'] = pd.to_datetime(df['Date comptable Hist'])
+        return df
+    except Exception as e:
+        st.error(f"Erreur lors du chargement des données de la feuille '{sheet_name}': {e}")
+        return None
 
 def check():
     try:
         with open("data/email.txt", "r") as f:
-            allow_mail={line.strip() for line in f if line.strip()}
-
+            allow_mail = {line.strip() for line in f if line.strip()}
         if st.session_state.get("email") in allow_mail:
             st.session_state.authenticated = True
-
+            st.session_state.user_email = st.session_state.get("email")
             del st.session_state["email"]
         else:
             st.session_state.authenticated = False
-            st.error("Email non autorisé. Veuillez contacter l'administrateur.")
+            st.error("Email non autorisé.")
     except FileNotFoundError:
         st.session_state.authenticated = False
-        st.error("Fichier d'autorisation introuvable. Veuillez contacter l'administrateur.")
+        st.error("Fichier d'autorisation introuvable.")
 
 def login():
-    st.header("Acces au tableau de bord")
+    st.header("Accès au tableau de bord")
     st.text_input("Veuillez entrer votre adresse email", key="email")
     st.button("Se connecter", on_click=check)
 
-
+@st.dialog("Accès AGI requis")
+def agi_auth_dialog():
+    st.info("Veuillez entrer un email autorisé pour accéder à cette section.")
+    email_agi = st.text_input("Email autorisé", key="agi_email_input")
+    if st.button("Vérifier"):
+        try:
+            with open("data/email_agi.txt", "r") as f:
+                agi_users = {line.strip() for line in f if line.strip()}
+            if email_agi in agi_users:
+                st.session_state.selected_button = 'AGI'
+                st.rerun()
+            else:
+                st.error("Désolé, cet email n'est pas autorisé pour la vue AGI.")
+        except FileNotFoundError:
+            st.error("Fichier d'autorisation AGI (email_agi.txt) non trouvé.")
 
 def main_dash():
-    data = {
-        'Date': ['01/07/2025', '02/05/2025', '03/06/2025', '02/07/2025', '03/06/2025',
-                '03/07/2025', '04/06/2025', '04/07/2025', '05/05/2025','05/05/2025','05/05/2025'],
-        'Nbre_trans': [1106, 1577, 1538, 970, 1213, 953, 950, 1092, 1666,1666,1666],
-        'Nbre_trans_moins750k': [588, 1021, 1133, 483, 720, 517, 482, 636, 934,934,934],
-        'Taux_trans_petit_montant': [53.16, 64.74, 58.46, 49.79, 59.36, 55.41, 50.74, 58.24, 56.06, 56.06, 56.06],
-        'Taux_trans_retrait_versement_moins_de_750k': [46.10, 55.15, 41.76, 44.74, 48.94, 51.47, 43.76, 52.07, 49.84, 49.84, 49.84],
-        'Retrait_moins_de_750k': [157, 244, 246, 113, 150, 121, 156, 155, 276,276,276],
-        'Versement_moins_de_750k': [198, 254, 256, 206, 220, 246, 128, 248, 331,331,331],
-        'Virement_moins_de_05_M': [185, 225, 134, 71, 112, 92, 103, 57, 211,211,211],
-    }
+    df_agences = load_data("data/opera.xlsx", sheet_name="Agence")
+    df_agi = load_data("data/opera.xlsx", sheet_name="AGI")
 
-
-
-    df = pd.DataFrame(data)
-    df_chart = pd.DataFrame(data)
-    df_chart['Date'] = pd.to_datetime(df_chart['Date'])
+    if df_agences is None or df_agi is None:
+        return
 
     if 'selected_button' not in st.session_state:
-        st.session_state.selected_button = 'AGENCES' 
+        st.session_state.selected_button = 'AGENCES'
+    
+    if st.session_state.get("show_agi_dialog"):
+        st.session_state.show_agi_dialog = False
+        agi_auth_dialog()
 
+    is_agence_view = st.session_state.selected_button == 'AGENCES'
+    df_source = df_agences if is_agence_view else df_agi
+    colonne_filtre = 'Code Agence Saisie' if is_agence_view else 'Code Utilisateur'
+    options_filtre = ["Tout"] + sorted(df_source[colonne_filtre].unique().tolist())
 
     with st.container(key="header_container"):
-        col1, col2 = st.columns([1, 3])
+        col1, col2 = st.columns([1, 4])
         with col1:
-            with st.container(key="sidebar_container"): 
-                st.image("assets/logo.png", use_container_width=True) 
-                selectbox_label = "AGI" if st.session_state.selected_button == 'AGI' else "AGENCES"
-                options = ["Tout", "Option 1", "Option 2", "Option 3"]
-                st.selectbox(selectbox_label, options, key="selectbox")
-
-                type_agences = "primary" if st.session_state.selected_button == 'AGENCES' else "secondary"
-                st.button("AGENCES", key="agences_button", on_click=lambda: st.session_state.update(selected_button='AGENCES'), type=type_agences, use_container_width=True)
-
-                type_agi = "primary" if st.session_state.selected_button == 'AGI' else "secondary"
-                st.button("AGI", key="agi_button", on_click=lambda: st.session_state.update(selected_button='AGI'), type=type_agi, use_container_width=True)
+            with st.container(key="sidebar_container"):
+                st.image("assets/logo.png", use_container_width=True)
+                selectbox_label = "AGI" if not is_agence_view else "AGENCES"
+                selection_filtre_tableau = st.selectbox(selectbox_label, options_filtre, key="selectbox")
+                if st.button("AGENCES", key="agences_btn", type="primary" if is_agence_view else "secondary", use_container_width=True):
+                    st.session_state.selected_button = 'AGENCES'; st.rerun()
+                if st.button("AGI", key="agi_btn", type="primary" if not is_agence_view else "secondary", use_container_width=True):
+                    st.session_state.show_agi_dialog = True; st.rerun()
 
         with col2:
-            with st.container(key="title_container",height=120):      
-                title_col, date_elements_col = st.columns([3, 2]) 
+            with st.container(key="title_container"):
+                title_col, date_elements_col = st.columns([3, 2])
                 with title_col:
-                    st.markdown("DASHBOARD DU SUIVI DU DEPLACEMENT DES OPERATIONS DE PETITS MONTANTS",unsafe_allow_html=True)
+                    st.markdown("DASHBOARD DU SUIVI DU DEPLACEMENT DES OPERATIONS DE PETITS MONTANTS", unsafe_allow_html=True)
                 with date_elements_col:
-                    # SÉLECTEUR DE DATE RANGE
-                    default_start_date = date(2025, 6, 23)
-                    default_end_date = date(2025, 7, 7)
+                    default_start, default_end = df_agences['Date comptable Hist'].min().date(), df_agences['Date comptable Hist'].max().date()
+                    start_date, end_date = st.date_input("DATE", value=(default_start, default_end), key="date_range_selector")
+                    if start_date > end_date:
+                        st.warning("Date de début > Date de fin."); start_date, end_date = default_start, default_end
+            
+            df_filtre = df_source[df_source[colonne_filtre] == selection_filtre_tableau] if selection_filtre_tableau != "Tout" else df_source
 
-                    start_date, end_date = st.date_input(
-                        "DATE", # Label au-dessus
-                        value=(default_start_date, default_end_date),
-                        key="date_range_selector"
-                    )
+            with st.container(key="graph_container", height=300):
+                if not df_filtre.empty:
+                    df_graph = df_filtre.groupby(df_filtre['Date comptable Hist'].dt.date).agg({'taux_caisse': 'mean', 'taux_vire': 'mean'}).reset_index()
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df_graph['Date comptable Hist'], y=df_graph['taux_caisse'], name='Taux Caisse', mode='lines+markers+text', text=df_graph['taux_caisse'].apply(lambda x: f'{x:.2%}'), textposition="top center", hovertemplate="<b>Date</b>: %{x|%d/%m/%Y}<br><b>Taux Caisse</b>: %{y:.2%}<extra></extra>"))
+                    fig.add_trace(go.Scatter(x=df_graph['Date comptable Hist'], y=df_graph['taux_vire'], name='Taux Virement', mode='lines+markers+text', text=df_graph['taux_vire'].apply(lambda x: f'{x:.2%}'), textposition="bottom center", hovertemplate="<b>Date</b>: %{x|%d/%m/%Y}<br><b>Taux Virement</b>: %{y:.2%}<extra></extra>"))
+                    title_text = f"Performance de : {selection_filtre_tableau}" if selection_filtre_tableau != "Tout" else "Vue d'Ensemble Globale"
+                    fig.update_layout(title=title_text, xaxis_range=[start_date, end_date], height=320, legend=dict(orientation="h", yanchor="bottom", y=-0.4))
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Aucune donnée à afficher pour le graphique.")
+        
+    with st.container(key="table_container"):
+        if not df_filtre.empty:
+            agg_rules = {'nbre_op': 'sum', 'nbre_op_mois750k': 'sum', 'retrait_moins de 750k': 'sum', 'versement_moins de 750k': 'sum', 'virement_moins de 05 M': 'sum'}
+            group_by_cols = [df_filtre['Date comptable Hist'].dt.date]
+            if not is_agence_view: group_by_cols.append(df_filtre['Code Utilisateur'])
+            df_agg = df_filtre.groupby(group_by_cols).agg(agg_rules).reset_index()
+            with np.errstate(divide='ignore', invalid='ignore'):
+                df_agg['Taux_trans_petit_montant'] = (df_agg['nbre_op_mois750k'] / df_agg['nbre_op']) * 100
+                df_agg['Taux_trans_retrait_versement_moins_de_750k'] = ((df_agg['retrait_moins de 750k'] + df_agg['versement_moins de 750k']) / df_agg['nbre_op_mois750k']) * 100
+            df_agg.fillna(0, inplace=True)
+            total_sums = df_agg.select_dtypes(include=np.number).sum()
+            total_row_df = pd.DataFrame([total_sums])
+            with np.errstate(divide='ignore', invalid='ignore'):
+                total_row_df['Taux_trans_petit_montant'] = (total_row_df['nbre_op_mois750k'] / total_row_df['nbre_op']) * 100
+                total_row_df['Taux_trans_retrait_versement_moins_de_750k'] = ((total_row_df['retrait_moins de 750k'] + total_row_df['versement_moins de 750k']) / total_row_df['nbre_op_mois750k']) * 100
+            total_row_df.fillna(0, inplace=True)
+            df_display = df_agg.copy()
+            df_display['Date comptable Hist'] = df_display['Date comptable Hist'].apply(lambda x: x.strftime('%d/%m/%Y'))
+            total_row_dict = total_row_df.iloc[0].to_dict()
+            total_row_dict['Date comptable Hist'] = 'Total'
+            if not is_agence_view: total_row_dict['Code Utilisateur'] = ''
+            df_display = pd.concat([df_display, pd.DataFrame([total_row_dict])], ignore_index=True)
+            
+            final_columns_map = {'Date comptable Hist': 'Date', 'Code Utilisateur': 'AGI', 'nbre_op': 'Nbre_trans', 'nbre_op_mois750k': 'Nbre_trans_moins750k', 'Taux_trans_petit_montant': 'Taux_trans_petit_montant', 'Taux_trans_retrait_versement_moins_de_750k': 'Taux_trans_retrait_versement_moins_de_750k', 'retrait_moins de 750k': 'Retrait_moins_de_750k', 'versement_moins de 750k': 'Versement_moins_de_750k', 'virement_moins de 05 M': 'Virement_moins_de_05_M'}
+            df_final_display = df_display.rename(columns=final_columns_map)
+            
+            final_columns_order = ['Date', 'Nbre_trans', 'Nbre_trans_moins750k', 'Taux_trans_petit_montant', 'Taux_trans_retrait_versement_moins_de_750k', 'Retrait_moins_de_750k', 'Versement_moins_de_750k', 'Virement_moins_de_05_M']
+            if not is_agence_view: final_columns_order.insert(1, 'AGI')
 
-            with st.container():
-                fig = go.Figure()
-
-                # Données pour le graphique (simulées)
-                dates_chart = ['Jun 2025', 'Jul 2025']
-                taux_versement = [55.15, 50.32, 47.95, 36.10, 37.82, 36.65, 41.76, 48.94, 55.30, 60.30, 64.74, 52.30]
-                taux_virement = [73.00, 52.30, 50.65, 44.74, 36.38, 47.95]
-
-                # Ligne pour taux versement
-                fig.add_trace(go.Scatter(
-                    y=taux_versement,
-                    mode='lines+markers',
-                    name='Taux Versement et retrait moins de 750k',
-                    line=dict(color='red', width=2),
-                    marker=dict(size=6, color='red')
-                ))
-
-                # Ligne pour taux virement
-                fig.add_trace(go.Scatter(
-                    y=taux_virement[:6],
-                    mode='lines+markers',
-                    name='Taux virement moins de 5 M',
-                    line=dict(color='black', width=2),
-                    marker=dict(size=6, color='black')
-                ))
-
-                fig.update_layout(
-                    height=320,
-                    showlegend=True,
-                    title={
-                        'text': "Taux Versement et retrait moins de 750k et Taux virement moins de 5 M par Date comptable Hist__",
-                        'y':0.9,
-                        'x':0.4,
-                        'xanchor': 'center',
-                        'yanchor': 'top',
-                        'font': dict(color='black') # Set title text color to black
-                    },
-
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=-0.3,
-                        xanchor="center",
-                        x=0.5,
-                        font=dict(size=10, color='black') 
-                    ),
-                    margin=dict(l=50, r=50, t=55, b=60),
-                    plot_bgcolor='white', 
-                    paper_bgcolor='white', 
-                    xaxis=dict(
-                        showgrid=True,
-                        gridcolor='lightgray',
-                        showticklabels=False,
-                        title_font=dict(color='black'), 
-                        tickfont=dict(color='black') 
-                    ),
-                    yaxis=dict(
-                        showgrid=True,
-                        gridcolor='lightgray',
-                        title="Taux Versement et retrait (%)",
-                        range=[20, 80],
-                        title_font=dict(color='black'), 
-                        tickfont=dict(color='black') 
-                    )
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-
-    with st.container(key="table_container"):   
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
-        )
+            st.dataframe(
+                df_final_display[final_columns_order],
+                hide_index=True, use_container_width=True,
+                column_config={
+                    "Taux_trans_petit_montant": st.column_config.NumberColumn("Taux Petit Montant", format="%.2f%%"), # Amélioration du format
+                    "Taux_trans_retrait_versement_moins_de_750k": st.column_config.NumberColumn("Taux Retrait/Versement", format="%.2f%%")
+                }
+            )
+        else:
+            st.warning("Aucune donnée à afficher pour la sélection actuelle.")
 
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
-
 
 if st.session_state.authenticated:
     main_dash()
 else:
     login()
-
-
-
