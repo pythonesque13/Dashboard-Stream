@@ -55,7 +55,7 @@ def send(subject, alerts_list):
                         {
                             "type": "Action.OpenUrl",
                             "title": "Ouvrir le Tableau de Bord",
-                            "url": "http://localhost:8501" 
+                            "url": "https://dashboard-stream-tbbi.onrender.com/" 
                         }
                     ]
                 }
